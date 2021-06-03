@@ -6,16 +6,15 @@ import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 contract escrow is ERC1155Holder, ReentrancyGuard {
-    enum Stage {NOT_LISTED, LISTED, SOLD}
+    enum Stage {NOT_LISTED, LISTED, PARTIALLY_SOLD, ORDER_CLOSED}
     struct Order {
+        Stage stage;
         uint256 id;
         address payable seller;
         uint256 tokenID;
-        uint256 amount;
+        uint256 amountToSell;
         IERC1155 contractAddr;
         uint256 price;
-        Stage stage;
-        address buyer;
     }
     using SafeMath for uint256;
     uint256 orderCtr;
@@ -30,17 +29,26 @@ contract escrow is ERC1155Holder, ReentrancyGuard {
         uint256 _amount,
         uint256 _price
     ) public {
-        orderCtr++;
+        require(_contract != address(0), "Null contract address provided!!!");
         IERC1155 token = IERC1155(_contract);
+        require(
+            token.isApprovedForAll(msg.sender, address(this)) == true,
+            "Token not approved for trade using this escrow!!!"
+        );
+        require(_amount > 0, "Amount to list not provided!!!");
+        require(
+            token.balanceOf(msg.sender, _tokenId) >= _amount,
+            "Not enough tokens in your wallet!!!"
+        );
+        orderCtr++;
         ORDER[orderCtr] = Order(
+            Stage.LISTED,
             orderCtr,
             payable(msg.sender),
             _tokenId,
             _amount,
             token,
-            _price,
-            Stage.LISTED,
-            address(0)
+            _price
         );
         token.safeTransferFrom(
             msg.sender,
@@ -51,19 +59,66 @@ contract escrow is ERC1155Holder, ReentrancyGuard {
         );
     }
 
-    function buy(uint256 orderID, uint256 amt) public payable {
-        require(ORDER[orderID].stage == Stage.LISTED, "Token not listed");
-        uint256 cost = (ORDER[orderID].price).mul(amt);
-        require(msg.value >= cost, "Insufficient funds!!!");
-        ORDER[orderID].buyer = msg.sender;
+    function unlist(uint256 orderID) public {
+        require(
+            msg.sender == ORDER[orderID].seller,
+            "Only seller can access this function!!!"
+        );
+        require(
+            (orderID > 0) && (orderID <= orderCtr),
+            "Invalid Order ID provided!!!"
+        );
+        require(
+            ((ORDER[orderID].stage == Stage.LISTED) ||
+                (ORDER[orderID].stage == Stage.PARTIALLY_SOLD)),
+            "Wrong Token stage!!!"
+        );
         ORDER[orderID].contractAddr.safeTransferFrom(
             address(this),
-            ORDER[orderID].buyer,
+            ORDER[orderID].seller,
             ORDER[orderID].tokenID,
-            amt,
+            ORDER[orderID].amountToSell,
+            ""
+        );
+        ORDER[orderID].amountToSell = 0;
+        ORDER[orderID].stage = Stage.ORDER_CLOSED;
+    }
+
+    function buy(uint256 orderID, uint256 buyAmount) public payable {
+        require(
+            (orderID > 0) && (orderID <= orderCtr),
+            "Invalid Order ID provided!!!"
+        );
+        require(
+            ORDER[orderID].stage != Stage.ORDER_CLOSED,
+            "Order is closed!!!"
+        );
+        require(
+            msg.sender != ORDER[orderID].seller,
+            "Sellers can't buy their own token!!!"
+        );
+        require(
+            (buyAmount > 0) && (buyAmount <= ORDER[orderID].amountToSell),
+            "Invalid buy amount provided!!!"
+        );
+        require(
+            ((ORDER[orderID].stage == Stage.LISTED) ||
+                (ORDER[orderID].stage == Stage.PARTIALLY_SOLD)),
+            "Wrong Token stage!!!"
+        );
+        uint256 cost = (ORDER[orderID].price).mul(buyAmount);
+        require(msg.value == cost, "Insufficient funds!!!");
+        ORDER[orderID].contractAddr.safeTransferFrom(
+            address(this),
+            msg.sender,
+            ORDER[orderID].tokenID,
+            buyAmount,
             ""
         );
         ORDER[orderID].seller.transfer(cost);
-        if (amt == ORDER[orderID].amount) ORDER[orderID].stage = Stage.SOLD;
+        ORDER[orderID].amountToSell -= buyAmount;
+        if (ORDER[orderID].amountToSell == 0)
+            ORDER[orderID].stage = Stage.ORDER_CLOSED;
+        else ORDER[orderID].stage = Stage.PARTIALLY_SOLD;
     }
 }
