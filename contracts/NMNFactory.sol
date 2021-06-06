@@ -4,17 +4,19 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 
 contract NMNFactory is ERC1155, Ownable {
     uint256 public lastID;
+    mapping(uint256 => string) public tokenURI;
 
     constructor() public ERC1155("") {}
 
     function nftMint(
         address minter,
-        string memory tokenURI,
-        uint256 amt
+        string memory _tokenURI,
+        uint256 _amt
     ) public {
         lastID++;
-        _setURI(tokenURI);
-        emit URI(tokenURI, lastID);
-        _mint(minter, lastID, amt, "");
+        _setURI(_tokenURI);
+        emit URI(_tokenURI, lastID);
+        _mint(minter, lastID, _amt, "");
+        tokenURI[lastID] = _tokenURI;
     }
 }
