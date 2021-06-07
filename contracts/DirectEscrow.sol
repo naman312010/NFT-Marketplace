@@ -17,7 +17,7 @@ contract escrow is ERC1155Holder, ReentrancyGuard {
         uint256 price;
     }
     using SafeMath for uint256;
-    uint256 orderCtr;
+    uint256 public orderCtr;
     mapping(uint256 => Order) public ORDER;
 
     event TokenListed(
